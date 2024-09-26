@@ -2,3 +2,5 @@ datasets
 /datasets
 hex_board.png
 hex_winning_positions.csv
+__pycache__
+/__pycache__
