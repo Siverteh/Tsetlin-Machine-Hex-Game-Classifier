@@ -1,0 +1,21 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "gcc build active file",  // Name of the build task
+            "type": "shell",
+            "command": "/usr/bin/gcc",  // Path to GCC
+            "args": [
+                "-g",                    // Enable debugging
+                "${file}",               // The current file
+                "-o",
+                "${workspaceFolder}/hex_creator"  // Output file
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "problemMatcher": ["$gcc"]
+        }
+    ]
+}
