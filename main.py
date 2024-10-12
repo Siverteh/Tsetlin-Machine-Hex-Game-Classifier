@@ -4,7 +4,7 @@ from tsetlin_machine.visualize_hex_board import visualize_hex_board
 # Example usage
 if __name__ == '__main__':
     # Initialize the data loader with your dataset path and board size
-    data_loader = HexDataLoader('hex_winning_positions.csv', board_size=5)
+    data_loader = HexDataLoader('datasets/hex_games_1_000_000_size_7.csv', board_size=7)
 
     # Load the data
     data_loader.load_data()

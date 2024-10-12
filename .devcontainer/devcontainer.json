@@ -24,6 +24,13 @@
         }
     },
     "forwardPorts": [8000],
-    "postCreateCommand": "pip install -r .devcontainer/requirements.txt",
-    "remoteUser": "root"
+    "postCreateCommand": "pip install -r requirements.txt",
+    "remoteUser": "root",
+    "runArgs": [
+        "--gpus", "all",
+        "--privileged",
+        "--ipc=host",
+        "--ulimit", "memlock=-1",
+        "--ulimit", "stack=67108864"
+    ]
 }
