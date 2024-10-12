@@ -1,7 +1,7 @@
 import random
 import csv
 
-BOARD_DIM = 7
+BOARD_DIM = 3
 
 # Neighbor offsets for a hexagonal grid
 neighbors = [-(BOARD_DIM + 2) + 1, -(BOARD_DIM + 2), -1, 1, (BOARD_DIM + 2), (BOARD_DIM + 2) - 1]
