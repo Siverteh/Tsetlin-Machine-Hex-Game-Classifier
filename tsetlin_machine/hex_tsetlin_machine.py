@@ -95,13 +95,13 @@ class HexTsetlinMachine():
         parser = argparse.ArgumentParser(description="Hex Graph Tsetlin Machine Hyperparameters")
 
         # Define command-line arguments with default values and help descriptions
-        parser.add_argument("--epochs", default=100, type=int, help="Number of training epochs.")
-        parser.add_argument("--number-of-clauses", default=30000, type=int, help="Number of clauses in the Tsetlin Machine.")
-        parser.add_argument("--T", default=1000, type=int, help="Threshold for clause activation.")
-        parser.add_argument("--s", default=5.0, type=float, help="Specificity parameter.")
-        parser.add_argument("--depth", default=5, type=int, help="Depth of the Tsetlin Machine.")
-        parser.add_argument("--hypervector-size", default=self.board_size*self.board_size, type=int, help="Size of the hypervectors.")
-        parser.add_argument("--hypervector-bits", default=8, type=int, help="Number of bits for hypervectors.")
+        parser.add_argument("--epochs", default=300, type=int, help="Number of training epochs.")
+        parser.add_argument("--number-of-clauses", default=5000, type=int, help="Number of clauses in the Tsetlin Machine.")
+        parser.add_argument("--T", default=10000, type=int, help="Threshold for clause activation.")
+        parser.add_argument("--s", default=1.0, type=float, help="Specificity parameter.")
+        parser.add_argument("--depth", default=2, type=int, help="Depth of the Tsetlin Machine.")
+        parser.add_argument("--hypervector-size", default=49, type=int, help="Size of the hypervectors.")
+        parser.add_argument("--hypervector-bits", default=2, type=int, help="Number of bits for hypervectors.")
         parser.add_argument("--message-size", default=256, type=int, help="Size of the messages.")
         parser.add_argument("--message-bits", default=2, type=int, help="Number of bits for messages.")
         parser.add_argument("--max-included-literals", default=32, type=int, help="Maximum number of literals included in clauses.")
@@ -126,9 +126,9 @@ class HexTsetlinMachine():
         # Iterate over each cell position on the board
         for i in range(self.board_size):
             for j in range(self.board_size):
-                for val in [-1, 0, 1]:  # Possible cell values: -1 (Player 2), 0 (Empty), 1 (Player 1)
-                    # Create a unique symbol name for each cell-value combination
-                    symbol_names.append(f"cell{i}_{j}_is_{val}")
+                symbol_names.append(f"cell{i}_{j}")
+        for val in ["-1", "0", "1"]:
+            symbol_names.append(val)
         return symbol_names
 
     def _get_neighbors(self, q, r):
@@ -150,6 +150,39 @@ class HexTsetlinMachine():
             if 0 <= nq < self.board_size and 0 <= nr < self.board_size:
                 neighbors.append((nq, nr))  # Add valid neighbor to the list
         return neighbors
+    
+    def _get_edge_type(self, q, r, nq, nr):
+        """
+        Determine the edge type based on the direction from (q, r) to (nq, nr) in a hexagonal grid.
+        
+        Directions are:
+        - 1: East (E)
+        - 2: West (W)
+        - 3: Northeast (NE)
+        - 4: Southwest (SW)
+        - 5: Southeast (SE)
+        - 6: Northwest (NW)
+        
+        Parameters:
+        - q, r: Coordinates of the current cell.
+        - nq, nr: Coordinates of the neighbor cell.
+        
+        Returns:
+        - int: Edge type corresponding to the direction.
+        """
+        if nq == q + 1 and nr == r:  # East (E)
+            return 1
+        elif nq == q - 1 and nr == r:  # West (W)
+            return 2
+        elif nq == q and nr == r + 1:  # Northeast (NE)
+            return 3
+        elif nq == q and nr == r - 1:  # Southwest (SW)
+            return 4
+        elif nq == q + 1 and nr == r - 1:  # Southeast (SE)
+            return 5
+        elif nq == q - 1 and nr == r + 1:  # Northwest (NW)
+            return 6
+        return 0  # Default case (if none match)
 
     def prepare_graphs(self):
         """
@@ -190,8 +223,9 @@ class HexTsetlinMachine():
                     neighbors = self._get_neighbors(q, r)  # Retrieve valid neighbors for the current cell
                     for nq, nr in neighbors:
                         neighbor_id = f"cell{nq}_{nr}"  # Neighbor cell ID
+                        edge_type = self._get_edge_type(q, r, nq, nr)
                         # Connect the current node to its neighbor with edge type 1
-                        self.graphs_train.add_graph_node_edge(graph_id, node_id, neighbor_id, 1)
+                        self.graphs_train.add_graph_node_edge(graph_id, node_id, neighbor_id, edge_type)
 
         # Add node features based on cell values in training data
         for graph_id in range(self.X_train.shape[0]):
@@ -200,9 +234,8 @@ class HexTsetlinMachine():
                     node_id = f"cell{q}_{r}"  # Current cell ID
                     cell_value = self.X_train[graph_id][q][r]  # Value of the current cell
                     # Create a feature name that indicates the cell's value
-                    feature_name = f"cell{q}_{r}_is_{int(cell_value)}"
-                    # Add the feature to the node in the graph
-                    self.graphs_train.add_graph_node_feature(graph_id, node_id, feature_name)
+                    self.graphs_train.add_graph_node_feature(graph_id, node_id, node_id)
+                    self.graphs_train.add_graph_node_feature(graph_id, node_id, str(cell_value))
 
         # Encode the training graphs (finalize the graph structures)
         self.graphs_train.encode()
@@ -240,8 +273,9 @@ class HexTsetlinMachine():
                     neighbors = self._get_neighbors(q, r)  # Retrieve valid neighbors for the current cell
                     for nq, nr in neighbors:
                         neighbor_id = f"cell{nq}_{nr}"  # Neighbor cell ID
+                        edge_type = self._get_edge_type(q, r, nq, nr)
                         # Connect the current node to its neighbor with edge type 1
-                        self.graphs_test.add_graph_node_edge(graph_id, node_id, neighbor_id, 1)
+                        self.graphs_test.add_graph_node_edge(graph_id, node_id, neighbor_id, edge_type)
 
         # Add node features based on cell values in testing data
         for graph_id in range(self.X_test.shape[0]):
@@ -249,10 +283,9 @@ class HexTsetlinMachine():
                 for r in range(self.board_size):
                     node_id = f"cell{q}_{r}"  # Current cell ID
                     cell_value = self.X_test[graph_id][q][r]  # Value of the current cell
-                    # Create a feature name that indicates the cell's value
-                    feature_name = f"cell{q}_{r}_is_{int(cell_value)}"
                     # Add the feature to the node in the graph
-                    self.graphs_test.add_graph_node_feature(graph_id, node_id, feature_name)
+                    self.graphs_test.add_graph_node_feature(graph_id, node_id, node_id)
+                    self.graphs_test.add_graph_node_feature(graph_id, node_id, str(cell_value))
 
         # Encode the testing graphs (finalize the graph structures)
         self.graphs_test.encode()
@@ -326,6 +359,59 @@ class HexTsetlinMachine():
         # Optionally, print hypervectors (useful for debugging or analysis)
         print(self.graphs_train.hypervectors)
 
+    def test(self):
+        # Load the test data from CSV
+        test_data = pd.read_csv('test.csv')
+
+        # Extract features (board state) and ignore the 'winner' column
+        X_test_new = test_data.drop('winner', axis=1).values
+        X_test_new = X_test_new.reshape(-1, self.board_size, self.board_size)  # Reshape to the 7x7 board
+        y = test_data['winner']
+
+        # Prepare a graph for each test game and predict the winner
+        for idx, game_state in enumerate(X_test_new):
+            # Prepare the current game state as a graph
+            graphs_test = Graphs(1, symbol_names=self.symbol_names, hypervector_size=self.args.hypervector_size, hypervector_bits=self.args.hypervector_bits)
+            graphs_test.set_number_of_graph_nodes(0, self.number_of_nodes)
+            graphs_test.prepare_node_configuration()
+
+            # Add the nodes for the current game state
+            for q in range(self.board_size):
+                for r in range(self.board_size):
+                    node_id = f"cell{q}_{r}"
+                    neighbors = self._get_neighbors(q, r)
+                    graphs_test.add_graph_node(0, node_id, len(neighbors))
+
+            # Add the edges between nodes for the current game state
+            graphs_test.prepare_edge_configuration()
+            for q in range(self.board_size):
+                for r in range(self.board_size):
+                    node_id = f"cell{q}_{r}"
+                    neighbors = self._get_neighbors(q, r)
+                    for nq, nr in neighbors:
+                        neighbor_id = f"cell{nq}_{nr}"
+                        edge_type = self._get_edge_type(q, r, nq, nr)
+                        graphs_test.add_graph_node_edge(0, node_id, neighbor_id, edge_type)
+
+            # Add the features for the current game state
+            for q in range(self.board_size):
+                for r in range(self.board_size):
+                    node_id = f"cell{q}_{r}"
+                    cell_value = game_state[q][r]
+                    graphs_test.add_graph_node_feature(0, node_id, node_id)
+                    graphs_test.add_graph_node_feature(0, node_id, str(cell_value))
+
+            graphs_test.encode()
+
+            # Predict the outcome of the current game state
+            predicted_winner = self.tm.predict(graphs_test)[0]  # Get the prediction for this single graph
+
+            # Print the predicted winner
+            if predicted_winner == 1:
+                print(f"Game {idx + 1}: Predicted Winner: Player 1, Actual winner: Player {2 if y[idx] == -1 else 1}")
+            else:
+                print(f"Game {idx + 1}: Predicted Winner: Player 2, Actual winner: Player {2 if y[idx] == -1 else 1}")
+
 if __name__ == "__main__":
     """
     Main execution block to instantiate the HexTsetlinMachine, prepare graphs, train the model,
@@ -335,8 +421,14 @@ if __name__ == "__main__":
     hexTsetlinMachine = HexTsetlinMachine(
         board_size=7,  # Size of the Hex board (7x7)
         dataset_path=Path("datasets/hex_games_1_000_000_size_7.csv"),  # Path to the dataset CSV file
-        nrows=1000  # Number of rows to load from the dataset
+        nrows=10000  # Number of rows to load from the dataset
     )
+
+    """hexTsetlinMachine = HexTsetlinMachine(
+        board_size=3,
+        dataset_path="datasets/hex_winning_positions.csv",
+        nrows=1000
+    )"""
 
     # Prepare the graph structures for training and testing data
     hexTsetlinMachine.prepare_graphs()
@@ -346,3 +438,5 @@ if __name__ == "__main__":
 
     # Evaluate the model's performance after training
     hexTsetlinMachine.evaluate()
+
+    hexTsetlinMachine.test()
