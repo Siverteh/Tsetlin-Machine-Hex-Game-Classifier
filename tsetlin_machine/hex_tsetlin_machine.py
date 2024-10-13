@@ -96,12 +96,12 @@ class HexTsetlinMachine():
 
         # Define command-line arguments with default values and help descriptions
         parser.add_argument("--epochs", default=100, type=int, help="Number of training epochs.")
-        parser.add_argument("--number-of-clauses", default=20000, type=int, help="Number of clauses in the Tsetlin Machine.")
-        parser.add_argument("--T", default=25000, type=int, help="Threshold for clause activation.")
-        parser.add_argument("--s", default=10.0, type=float, help="Specificity parameter.")
-        parser.add_argument("--depth", default=1, type=int, help="Depth of the Tsetlin Machine.")
-        parser.add_argument("--hypervector-size", default=128, type=int, help="Size of the hypervectors.")
-        parser.add_argument("--hypervector-bits", default=2, type=int, help="Number of bits for hypervectors.")
+        parser.add_argument("--number-of-clauses", default=30000, type=int, help="Number of clauses in the Tsetlin Machine.")
+        parser.add_argument("--T", default=1000, type=int, help="Threshold for clause activation.")
+        parser.add_argument("--s", default=5.0, type=float, help="Specificity parameter.")
+        parser.add_argument("--depth", default=5, type=int, help="Depth of the Tsetlin Machine.")
+        parser.add_argument("--hypervector-size", default=self.board_size*self.board_size, type=int, help="Size of the hypervectors.")
+        parser.add_argument("--hypervector-bits", default=8, type=int, help="Number of bits for hypervectors.")
         parser.add_argument("--message-size", default=256, type=int, help="Size of the messages.")
         parser.add_argument("--message-bits", default=2, type=int, help="Number of bits for messages.")
         parser.add_argument("--max-included-literals", default=32, type=int, help="Maximum number of literals included in clauses.")
@@ -209,8 +209,8 @@ class HexTsetlinMachine():
 
         # Initialize Graphs object for testing data, inheriting configurations from training graphs
         self.graphs_test = Graphs(
-            self.X_test.shape[0],                 # Number of graphs (samples) in testing data
-            init_with=self.graphs_train            # Initialize with the same configuration as training graphs
+            self.X_test.shape[0],                 
+            init_with=self.graphs_train          
         )
 
         # Set the number of nodes for each graph in testing data
