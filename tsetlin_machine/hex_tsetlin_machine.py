@@ -97,10 +97,10 @@ class HexTsetlinMachine():
         # Define command-line arguments with default values and help descriptions
         parser.add_argument("--epochs", default=300, type=int, help="Number of training epochs.")
         parser.add_argument("--number-of-clauses", default=5000, type=int, help="Number of clauses in the Tsetlin Machine.")
-        parser.add_argument("--T", default=10000, type=int, help="Threshold for clause activation.")
-        parser.add_argument("--s", default=1.0, type=float, help="Specificity parameter.")
-        parser.add_argument("--depth", default=2, type=int, help="Depth of the Tsetlin Machine.")
-        parser.add_argument("--hypervector-size", default=49, type=int, help="Size of the hypervectors.")
+        parser.add_argument("--T", default=25000, type=int, help="Threshold for clause activation.")
+        parser.add_argument("--s", default=5.0, type=float, help="Specificity parameter.")
+        parser.add_argument("--depth", default=3, type=int, help="Depth of the Tsetlin Machine.")
+        parser.add_argument("--hypervector-size", default=256, type=int, help="Size of the hypervectors.")
         parser.add_argument("--hypervector-bits", default=2, type=int, help="Number of bits for hypervectors.")
         parser.add_argument("--message-size", default=256, type=int, help="Size of the messages.")
         parser.add_argument("--message-bits", default=2, type=int, help="Number of bits for messages.")
@@ -192,7 +192,7 @@ class HexTsetlinMachine():
         # Initialize Graphs object for training data
         self.graphs_train = Graphs(
             self.X_train.shape[0],                 # Number of graphs (samples) in training data
-            symbol_names=self.symbol_names,        # List of feature names
+            symbols=self.symbol_names,        # List of feature names
             hypervector_size=self.args.hypervector_size,  # Size of hypervectors
             hypervector_bits=self.args.hypervector_bits   # Number of bits for hypervectors
         )
@@ -234,8 +234,8 @@ class HexTsetlinMachine():
                     node_id = f"cell{q}_{r}"  # Current cell ID
                     cell_value = self.X_train[graph_id][q][r]  # Value of the current cell
                     # Create a feature name that indicates the cell's value
-                    self.graphs_train.add_graph_node_feature(graph_id, node_id, node_id)
-                    self.graphs_train.add_graph_node_feature(graph_id, node_id, str(cell_value))
+                    self.graphs_train.add_graph_node_property(graph_id, node_id, node_id)
+                    self.graphs_train.add_graph_node_property(graph_id, node_id, str(cell_value))
 
         # Encode the training graphs (finalize the graph structures)
         self.graphs_train.encode()
@@ -284,8 +284,8 @@ class HexTsetlinMachine():
                     node_id = f"cell{q}_{r}"  # Current cell ID
                     cell_value = self.X_test[graph_id][q][r]  # Value of the current cell
                     # Add the feature to the node in the graph
-                    self.graphs_test.add_graph_node_feature(graph_id, node_id, node_id)
-                    self.graphs_test.add_graph_node_feature(graph_id, node_id, str(cell_value))
+                    self.graphs_test.add_graph_node_property(graph_id, node_id, node_id)
+                    self.graphs_test.add_graph_node_property(graph_id, node_id, str(cell_value))
 
         # Encode the testing graphs (finalize the graph structures)
         self.graphs_test.encode()
@@ -398,8 +398,8 @@ class HexTsetlinMachine():
                 for r in range(self.board_size):
                     node_id = f"cell{q}_{r}"
                     cell_value = game_state[q][r]
-                    graphs_test.add_graph_node_feature(0, node_id, node_id)
-                    graphs_test.add_graph_node_feature(0, node_id, str(cell_value))
+                    graphs_test.add_graph_node_property(0, node_id, node_id)
+                    graphs_test.add_graph_node_property(0, node_id, str(cell_value))
 
             graphs_test.encode()
 
@@ -420,8 +420,8 @@ if __name__ == "__main__":
     # Instantiate the HexTsetlinMachine with specified parameters
     hexTsetlinMachine = HexTsetlinMachine(
         board_size=7,  # Size of the Hex board (7x7)
-        dataset_path=Path("datasets/hex_games_1_000_000_size_7.csv"),  # Path to the dataset CSV file
-        nrows=10000  # Number of rows to load from the dataset
+        dataset_path="datasets/hex_games_1_000_000_size_7.csv",  # Path to the dataset CSV file
+        nrows=50000  # Number of rows to load from the dataset
     )
 
     """hexTsetlinMachine = HexTsetlinMachine(
