@@ -1,7 +1,7 @@
 import random
 import csv
 
-BOARD_DIM = 3
+BOARD_DIM = 5
 
 # Neighbor offsets for a hexagonal grid
 neighbors = [-(BOARD_DIM + 2) + 1, -(BOARD_DIM + 2), -1, 1, (BOARD_DIM + 2), (BOARD_DIM + 2) - 1]
@@ -129,33 +129,43 @@ def simulate_hex_game(game):
 
 # Simulate and save games to CSV
 if __name__ == "__main__":
-    num_games_per_category = 1000 // 6  # 1000 total games, equally divided across categories
+    num_unique_games = 100000  # Desired number of unique games
     player_1_wins = 0
     player_neg1_wins = 0
+
+    unique_boards = set()  # To store unique board states
 
     with open('hex_winning_positions.csv', mode='w', newline='') as file:
         csv_writer = csv.writer(file)
         write_csv_headers(csv_writer)
 
-        for rewind_moves in range(0, 6):  # 0 = fully connected, 1 to 5 moves away
-            for game_num in range(num_games_per_category):
-                game = HexGame()
+        unique_games_saved = 0  # Counter for unique games saved
 
-                winner = simulate_hex_game(game)  # Simulate the full game
-                if rewind_moves > 0:
-                    # Rewind 1 to 5 moves to create near-winning states
-                    game.rewind_moves(rewind_moves)
+        while unique_games_saved < num_unique_games:
+            game = HexGame()
 
-                # Save the game result to the CSV
-                save_game_to_csv(game, winner, csv_writer)
+            winner = simulate_hex_game(game)  # Simulate the full game
 
-                if winner == 1:
-                    player_1_wins += 1
-                elif winner == -1:
-                    player_neg1_wins += 1
+            # Get the board state and convert it to a tuple (hashable)
+            board_state = tuple(game.get_board_state())
 
-                if game_num % 100 == 0:
-                    print(f"Rewind {rewind_moves} - Game {game_num} completed.")
+            # Check if this board state is unique
+            if board_state in unique_boards:
+                continue  # Skip if this board state has already been generated
+
+            # Add the unique board state to the set
+            unique_boards.add(board_state)
+
+            # Save the game result to the CSV
+            save_game_to_csv(game, winner, csv_writer)
+
+            if winner == 1:
+                player_1_wins += 1
+            elif winner == -1:
+                player_neg1_wins += 1
+
+            unique_games_saved += 1  # Increment the unique games counter
 
     print(f"Player 1 wins: {player_1_wins}")
     print(f"Player -1 wins: {player_neg1_wins}")
+    print(f"Total unique games saved: {unique_games_saved}")

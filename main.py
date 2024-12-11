@@ -4,10 +4,10 @@ from tsetlin_machine.visualize_hex_board import visualize_hex_board
 # Example usage
 if __name__ == '__main__':
     # Initialize the data loader with your dataset path and board size
-    data_loader = HexDataLoader('datasets/hex_games_1_000_000_size_7.csv', board_size=7)
+    data_loader = HexDataLoader('C:/Users/siver/Master_School_Work/Autumn2024/Learning_Systems/Learning_Systems_Project/datasets/hex_games_two_moves_before_win.csv', board_size=5)
 
     # Load the data
-    data_loader.load_data()
+    data_loader.load_data(desired_samples_per_class=10)
 
     # Get a random game state and winner
     board_state, winner = data_loader.get_random_entry()

@@ -33,7 +33,7 @@ class HexTsetlinMachine():
     - tm (MultiClassGraphTsetlinMachine): The GTM model instance.
     """
 
-    def __init__(self, board_size: int, dataset_path: Path, nrows: int):
+    def __init__(self, board_size: int, dataset_path: Path, nrows: int, epochs: int = 100, num_clauses: int = 20, T: int = 200, s: int = 1.0, depth: int = 2):
         """
         Initialize the HexTsetlinMachine with dataset and hyperparameters.
 
@@ -43,10 +43,15 @@ class HexTsetlinMachine():
         - nrows (int): Number of rows to load from the dataset.
         """
         self.board_size = board_size  # Set the board size (e.g., 7 for 7x7)
+        self.epochs = epochs
+        self.num_clauses = num_clauses
+        self.T = T
+        self.s = s
+        self.depth = depth
 
         # Initialize and load data using HexDataLoader
         self.data_loader = HexDataLoader(dataset_path, board_size)
-        self.data_loader.load_data(nrows=nrows)  # Load specified number of rows
+        self.data_loader.load_data(desired_samples_per_class=nrows//2)  # Load specified number of rows
 
         # Retrieve feature matrix X and labels Y from the data loader
         self.X, self.Y = self.data_loader.get_all_data()
@@ -54,12 +59,18 @@ class HexTsetlinMachine():
         self.Y = self.Y.astype(np.int32)  # Ensure labels are integers
 
         # Split data into training and testing sets (80% train, 20% test)
-        self.X_train, self.X_test, self.Y_train, self.Y_test = train_test_split(
-            self.X, self.Y, test_size=0.2, random_state=42
+         # Split data into training (70%), validation (15%), and test (15%) sets
+        X_temp, self.X_test, Y_temp, self.Y_test = train_test_split(
+            self.X, self.Y, test_size=0.15, random_state=42, stratify=self.Y
+        )
+
+        self.X_train, self.X_val, self.Y_train, self.Y_val = train_test_split(
+            X_temp, Y_temp, test_size=0.1765, random_state=42, stratify=Y_temp
         )
 
         # Map labels: -1 (Player 2) to 0, 1 (Player 1) to 1 for binary classification
         self.Y_train = np.where(self.Y_train == -1, 0, 1)
+        self.Y_val = np.where(self.Y_val == -1, 0, 1)
         self.Y_test = np.where(self.Y_test == -1, 0, 1)
 
         # Set hyperparameters and configurations
@@ -69,7 +80,7 @@ class HexTsetlinMachine():
         self.number_of_nodes = self.board_size * self.board_size
 
         # Generate symbol names based on cell positions and their possible values
-        self.symbol_names = self._set_symbol_names()
+        self.symbol_names = self._set_symbol_names(property="multiple")
 
         # Initialize the MultiClassGraphTsetlinMachine with the specified hyperparameters
         self.tm = MultiClassGraphTsetlinMachine(
@@ -79,7 +90,9 @@ class HexTsetlinMachine():
             depth=self.args.depth,
             message_size=self.args.message_size,
             message_bits=self.args.message_bits,
-            max_included_literals=self.args.max_included_literals
+            max_included_literals=self.args.max_included_literals,
+            grid=(16*13,1,1),
+			block=(128,1,1)
         )
 
     def _set_default_args(self, **kwargs):
@@ -95,11 +108,11 @@ class HexTsetlinMachine():
         parser = argparse.ArgumentParser(description="Hex Graph Tsetlin Machine Hyperparameters")
 
         # Define command-line arguments with default values and help descriptions
-        parser.add_argument("--epochs", default=300, type=int, help="Number of training epochs.")
-        parser.add_argument("--number-of-clauses", default=5000, type=int, help="Number of clauses in the Tsetlin Machine.")
-        parser.add_argument("--T", default=25000, type=int, help="Threshold for clause activation.")
-        parser.add_argument("--s", default=5.0, type=float, help="Specificity parameter.")
-        parser.add_argument("--depth", default=3, type=int, help="Depth of the Tsetlin Machine.")
+        parser.add_argument("--epochs", default=self.epochs, type=int, help="Number of training epochs.")
+        parser.add_argument("--number-of-clauses", default=self.num_clauses, type=int, help="Number of clauses in the Tsetlin Machine.")
+        parser.add_argument("--T", default=self.T, type=int, help="Threshold for clause activation.")
+        parser.add_argument("--s", default=self.s, type=float, help="Specificity parameter.")
+        parser.add_argument("--depth", default=self.depth, type=int, help="Depth of the Tsetlin Machine.")
         parser.add_argument("--hypervector-size", default=256, type=int, help="Size of the hypervectors.")
         parser.add_argument("--hypervector-bits", default=2, type=int, help="Number of bits for hypervectors.")
         parser.add_argument("--message-size", default=256, type=int, help="Size of the messages.")
@@ -115,7 +128,7 @@ class HexTsetlinMachine():
                 setattr(args, key, value)
         return args
 
-    def _set_symbol_names(self):
+    def _set_symbol_names(self, property: str = "single"):
         """
         Generate symbol names for each cell position and its possible values.
 
@@ -123,12 +136,17 @@ class HexTsetlinMachine():
         - List[str]: List of symbol names.
         """
         symbol_names = []
-        # Iterate over each cell position on the board
-        for i in range(self.board_size):
-            for j in range(self.board_size):
-                symbol_names.append(f"cell{i}_{j}")
-        for val in ["-1", "0", "1"]:
-            symbol_names.append(val)
+        if property == "single":
+            for i in range(self.board_size):
+                for j in range(self.board_size):
+                    for val in ["-1", "0", "1"]:
+                        symbol_names.append(f"cell{i}_{j}_is_{val}")
+        else:
+            for i in range(self.board_size):
+                for j in range(self.board_size):
+                    symbol_names.append(f"cell{i}_{j}")
+            for val in ["-1", "0", "1"]:
+                symbol_names.append(val)
         return symbol_names
 
     def _get_neighbors(self, q, r):
@@ -171,50 +189,54 @@ class HexTsetlinMachine():
         - int: Edge type corresponding to the direction.
         """
         if nq == q + 1 and nr == r:  # East (E)
-            return 1
+            return 0
         elif nq == q - 1 and nr == r:  # West (W)
-            return 2
+            return 1
         elif nq == q and nr == r + 1:  # Northeast (NE)
-            return 3
+            return 2
         elif nq == q and nr == r - 1:  # Southwest (SW)
-            return 4
+            return 3
         elif nq == q + 1 and nr == r - 1:  # Southeast (SE)
-            return 5
+            return 4
         elif nq == q - 1 and nr == r + 1:  # Northwest (NW)
-            return 6
-        return 0  # Default case (if none match)
+            return 5
+        return -1  # Default case (if none match)
 
     def prepare_graphs(self):
         """
-        Prepare graph structures for both training and testing data.
+        Prepare graph structures for training, validation, and test data.
         This includes setting up nodes, edges, and node features for each graph.
         """
-        # Initialize Graphs object for training data
+        # --- Prepare Training Graphs ---
+        print("Setting up training graphs")
         self.graphs_train = Graphs(
             self.X_train.shape[0],                 # Number of graphs (samples) in training data
-            symbols=self.symbol_names,        # List of feature names
+            symbols=self.symbol_names,               # List of feature names
             hypervector_size=self.args.hypervector_size,  # Size of hypervectors
             hypervector_bits=self.args.hypervector_bits   # Number of bits for hypervectors
         )
-
+    
         # Set the number of nodes for each graph in training data
         for graph_id in range(self.X_train.shape[0]):
             self.graphs_train.set_number_of_graph_nodes(graph_id, self.number_of_nodes)
-
+    
         # Prepare node configuration (internal setup required by Graphs)
         self.graphs_train.prepare_node_configuration()
 
-        # Add nodes to each graph in training data
+        print("Adding training graph nodes")
+        # Add nodes and edges to each graph in training data
         for graph_id in range(self.X_train.shape[0]):
             for q in range(self.board_size):
                 for r in range(self.board_size):
                     node_id = f"cell{q}_{r}"
                     neighbors = self._get_neighbors(q, r)
+                    # AddEach node has a number of edges equal to the number of neighbors
                     self.graphs_train.add_graph_node(graph_id, node_id, len(neighbors))
-
+        
         # Prepare edge configuration (internal setup required by Graphs)
         self.graphs_train.prepare_edge_configuration()
 
+        print("Adding training graph edges")
         # Add edges between nodes in training data graphs
         for graph_id in range(self.X_train.shape[0]):
             for q in range(self.board_size):
@@ -224,210 +246,272 @@ class HexTsetlinMachine():
                     for nq, nr in neighbors:
                         neighbor_id = f"cell{nq}_{nr}"  # Neighbor cell ID
                         edge_type = self._get_edge_type(q, r, nq, nr)
-                        # Connect the current node to its neighbor with edge type 1
+                        # Connect the current node to its neighbor with the appropriate edge type
                         self.graphs_train.add_graph_node_edge(graph_id, node_id, neighbor_id, edge_type)
 
+        print("Adding training graph properties")
         # Add node features based on cell values in training data
         for graph_id in range(self.X_train.shape[0]):
             for q in range(self.board_size):
                 for r in range(self.board_size):
                     node_id = f"cell{q}_{r}"  # Current cell ID
-                    cell_value = self.X_train[graph_id][q][r]  # Value of the current cell
-                    # Create a feature name that indicates the cell's value
+                    cell_value = str(self.X_train[graph_id][q][r])  # Value of the current cell as string
+                    # AddAdd node properties: node_id (cell coordinate) and cell_value
                     self.graphs_train.add_graph_node_property(graph_id, node_id, node_id)
-                    self.graphs_train.add_graph_node_property(graph_id, node_id, str(cell_value))
+                    self.graphs_train.add_graph_node_property(graph_id, node_id, cell_value)
 
+        print("Encoding training graph")
         # Encode the training graphs (finalize the graph structures)
         self.graphs_train.encode()
 
-        # Initialize Graphs object for testing data, inheriting configurations from training graphs
+        print("Setting up validation graphs")
+        # --- Prepare Validation Graphs ---
+        self.graphs_val = Graphs(
+            self.X_val.shape[0],
+            init_with=self.graphs_train  # Inherit configurations from training graphs
+        )
+    
+        # Set the number of nodes for each graph in validation data
+        for graph_id in range(self.X_val.shape[0]):
+            self.graphs_val.set_number_of_graph_nodes(graph_id, self.number_of_nodes)
+    
+        # Prepare node configuration for validation graphs
+        self.graphs_val.prepare_node_configuration()
+
+        print("Adding validation graph nodes")
+        for graph_id in range(self.X_val.shape[0]):
+            for q in range(self.board_size):
+                for r in range(self.board_size):
+                    node_id = f"cell{q}_{r}"
+                    neighbors = self._get_neighbors(q, r)
+                    self.graphs_val.add_graph_node(graph_id, node_id, len(neighbors))
+    
+        self.graphs_val.prepare_edge_configuration()
+
+        print("Adding validation graph edges")
+        for graph_id in range(self.X_val.shape[0]):
+            for q in range(self.board_size):
+                for r in range(self.board_size):
+                    node_id = f"cell{q}_{r}"
+                    for nq, nr in self._get_neighbors(q, r):
+                        neighbor_id = f"cell{nq}_{nr}"
+                        edge_type = self._get_edge_type(q, r, nq, nr)
+                        self.graphs_val.add_graph_node_edge(graph_id, node_id, neighbor_id, edge_type)
+
+        print("Adding validation graph properties")
+        # AddAdd node properties
+        for graph_id in range(self.X_val.shape[0]):
+            for q in range(self.board_size):
+                for r in range(self.board_size):
+                    node_id = f"cell{q}_{r}"
+                    cell_value = str(self.X_val[graph_id][q][r])
+                    self.graphs_val.add_graph_node_property(graph_id, node_id, node_id)
+                    self.graphs_val.add_graph_node_property(graph_id, node_id, cell_value)
+
+        print("Encoding validation graph")
+        self.graphs_val.encode()
+
+        print("Setting up test graphs")
+        # --- Prepare Test Graphs ---
         self.graphs_test = Graphs(
             self.X_test.shape[0],                 
             init_with=self.graphs_train          
         )
-
-        # Set the number of nodes for each graph in testing data
+    
         for graph_id in range(self.X_test.shape[0]):
             self.graphs_test.set_number_of_graph_nodes(graph_id, self.number_of_nodes)
-
-        # Prepare node configuration for testing graphs
+    
+        # Prepare node configuration for test graphs
         self.graphs_test.prepare_node_configuration()
 
-        # Add nodes to each graph in testing data
+        print("Adding test graph nodes")
         for graph_id in range(self.X_test.shape[0]):
             for q in range(self.board_size):
                 for r in range(self.board_size):
                     node_id = f"cell{q}_{r}"
                     neighbors = self._get_neighbors(q, r)
-                    # Each node (cell) has 6 neighbors in a hex grid
                     self.graphs_test.add_graph_node(graph_id, node_id, len(neighbors))
-
-        # Prepare edge configuration for testing graphs
+    
         self.graphs_test.prepare_edge_configuration()
 
-        # Add edges between nodes in testing data graphs
+        print("Adding test graph edges")
         for graph_id in range(self.X_test.shape[0]):
             for q in range(self.board_size):
                 for r in range(self.board_size):
-                    node_id = f"cell{q}_{r}"  # Current cell ID
-                    neighbors = self._get_neighbors(q, r)  # Retrieve valid neighbors for the current cell
-                    for nq, nr in neighbors:
-                        neighbor_id = f"cell{nq}_{nr}"  # Neighbor cell ID
+                    node_id = f"cell{q}_{r}"
+                    for nq, nr in self._get_neighbors(q, r):
+                        neighbor_id = f"cell{nq}_{nr}"
                         edge_type = self._get_edge_type(q, r, nq, nr)
-                        # Connect the current node to its neighbor with edge type 1
                         self.graphs_test.add_graph_node_edge(graph_id, node_id, neighbor_id, edge_type)
 
-        # Add node features based on cell values in testing data
+        print("Adding test graph properties")
+        # Add node properties
         for graph_id in range(self.X_test.shape[0]):
             for q in range(self.board_size):
                 for r in range(self.board_size):
-                    node_id = f"cell{q}_{r}"  # Current cell ID
-                    cell_value = self.X_test[graph_id][q][r]  # Value of the current cell
-                    # Add the feature to the node in the graph
+                    node_id = f"cell{q}_{r}"
+                    cell_value = str(self.X_test[graph_id][q][r])
                     self.graphs_test.add_graph_node_property(graph_id, node_id, node_id)
-                    self.graphs_test.add_graph_node_property(graph_id, node_id, str(cell_value))
+                    self.graphs_test.add_graph_node_property(graph_id, node_id, cell_value)
 
-        # Encode the testing graphs (finalize the graph structures)
+        print("Encoding test graph")
+        #Encode test graphs
         self.graphs_test.encode()
-        print("Training and testing data prepared")
+        print("Training, validation, and test data prepared")
+    
 
     def train(self):
         """
         Train the Graph Tsetlin Machine over the specified number of epochs.
-        After each epoch, evaluate and print training and testing accuracies along with timing.
+        After each epoch, evaluate and print training and validation accuracies along with timing.
         """
-        # Iterate over the number of training epochs
         for i in range(self.args.epochs):
             start_training = time()  # Start timer for training
-
+    
             # Fit the model on training graphs for one epoch
             self.tm.fit(self.graphs_train, self.Y_train, epochs=1, incremental=True)
             stop_training = time()  # Stop timer after training
-
-            start_testing = time()  # Start timer for testing
-
-            # Predict on test graphs and calculate test accuracy
-            result_test = 100 * (self.tm.predict(self.graphs_test) == self.Y_test).mean()
-            stop_testing = time()  # Stop timer after testing
-
+    
+            #Evaluate on validation set
+            start_validation = time()
+            result_val = 100 * (self.tm.predict(self.graphs_val) == self.Y_val).mean()
+            stop_validation = time()
+    
             # Predict on training graphs and calculate training accuracy
             result_train = 100 * (self.tm.predict(self.graphs_train) == self.Y_train).mean()
-
-            # Print epoch number, training accuracy, test accuracy, and timings
-            print(f"{i} {result_train:.2f} {result_test:.2f} {stop_training - start_training:.2f} {stop_testing - start_testing:.2f}")
+    
+            # Print epoch number, training accuracy, validation accuracy, and timings
+            print(f"Epoch {i}: Train Acc: {result_train:.2f}%, Val Acc: {result_val:.2f}%, Training Time: {stop_training - start_training:.2f}s, Validation Time: {stop_validation - start_validation:.2f}s")
 
         # After all epochs, retrieve and print clause information
-        weights = self.tm.get_state()[1].reshape(2, -1)  # Retrieve weights for clauses, reshaped for two classes
-        for i in range(self.tm.number_of_clauses):
-            # Print clause number and its weights for both classes
-            print(f"Clause #{i} W:({weights[0, i]} {weights[1, i]})", end=' ')
-            literals = []  # List to hold literals (features) in the clause
-            # Iterate over each possible literal in the clause
-            for k in range(self.args.hypervector_size * 2):
-                if self.tm.ta_action(0, i, k):  # Check if the literal is included in the clause
-                    if k < self.args.hypervector_size:
-                        # Positive literal: cell is occupied by Player 1
-                        literals.append(f"cell{k // self.board_size}_{k % self.board_size}")
-                    else:
-                        # Negative literal: cell is not occupied by Player 1 (Player 2 or Empty)
-                        literals.append(f"NOT cell{(k - self.args.hypervector_size) // self.board_size}_{(k - self.args.hypervector_size) % self.board_size}")
-            # Join literals with ' AND ' to represent the clause
-            print(" AND ".join(literals))
+        #weights = self.tm.get_state()[1].reshape(2, -1)  # Retrieve weights for clauses, reshaped for two classes
+        #for i in range(self.tm.number_of_clauses):
+        #    # Print clause number and its weights for both classes
+        #    print(f"Clause #{i} W:({weights[0, i]} {weights[1, i]})", end=' ')
+        #    literals = []  # List to hold literals (features) in the clause
+        #    # Iterate over each possible literal in the clause
+        #    for k in range(self.args.hypervector_size * 2):
+        #        if self.tm.ta_action(0, i, k):  # Check if the literal is included in the clause
+        #            if k < self.args.hypervector_size:
+        #                # Positive literal
+        #                symbol_name = self.symbol_names[k]
+        #                literals.append(f"{symbol_name}")
+        #            else:
+        #                # Negative literal
+        #                symbol_name = self.symbol_names[k - self.args.hypervector_size]
+        #                literals.append(f"NOT {symbol_name}")
+        #    # Join literals with ' AND ' to represent the clause
+        #   print(" AND ".join(literals))
+
 
     def evaluate(self):
         """
         Perform a final evaluation after training and print the final accuracies.
-        Also, optionally print the hypervectors for further analysis.
         """
-        # Start timer for final training (one additional epoch)
-        start_training = time()
-        self.tm.fit(self.graphs_train, self.Y_train, epochs=1, incremental=True)
-        stop_training = time()
-
         # Start timer for final testing
         start_testing = time()
         # Predict on test graphs and calculate test accuracy
-        result_test = 100 * (self.tm.predict(self.graphs_test) == self.Y_test).mean()
+        result_test = 100 * (self.tm.predict(self.graphs_val) == self.Y_val).mean()
         stop_testing = time()
-
+    
         # Predict on training graphs and calculate training accuracy
-        result_train = 100 * (self.tm.predict(self.graphs_train) == self.Y_train).mean()
-
-        # Print final training and testing accuracies along with timings
-        print(f"Final Results: Train Accuracy = {result_train:.2f}%, Test Accuracy = {result_test:.2f}%, Time = {stop_training - start_training:.2f}s (training), {stop_testing - start_testing:.2f}s (testing)")
-
-        # Optionally, print hypervectors (useful for debugging or analysis)
-        print(self.graphs_train.hypervectors)
+        result_train = 100 *(self.tm.predict(self.graphs_train) == self.Y_train).mean()
+    
+        # Print final training and test accuracies along with timing
+        print(f"Final Results: Train Accuracy = {result_train:.2f}%, Test Accuracy = {result_test:.2f}%, Testing Time = {stop_testing - start_testing:.2}s")
+    
 
     def test(self):
-        # Load the test data from CSV
-        test_data = pd.read_csv('test.csv')
+        """
+        Print the predicted and actual winners for each game in the test set.
+        """
+        # Predict the outcomes on the test set
+        predictions = self.tm.predict(self.graphs_test)
 
-        # Extract features (board state) and ignore the 'winner' column
-        X_test_new = test_data.drop('winner', axis=1).values
-        X_test_new = X_test_new.reshape(-1, self.board_size, self.board_size)  # Reshape to the 7x7 board
-        y = test_data['winner']
+        correct = 0
+        count = 0
+    
+        # Print predicted and actual winners for each test sample
+        for idx in range(len(predictions)):
+            predicted_winner = predictions[idx]
+            actual_winner = self.Y_test[idx]
+            # Map labels back to Player 1 and Player 2
+            predicted_player = 1 if predicted_winner == 1 else 2
+            actual_player = 1 if actual_winner == 1 else 2
 
-        # Prepare a graph for each test game and predict the winner
-        for idx, game_state in enumerate(X_test_new):
-            # Prepare the current game state as a graph
-            graphs_test = Graphs(1, symbol_names=self.symbol_names, hypervector_size=self.args.hypervector_size, hypervector_bits=self.args.hypervector_bits)
-            graphs_test.set_number_of_graph_nodes(0, self.number_of_nodes)
-            graphs_test.prepare_node_configuration()
+            if predicted_player == actual_player:
+                correct += 1
+            count += 1
+            if (idx % 500) == 0:
+                print(f"Game {idx + 1}: Predicted Winner: Player {predicted_player}, Actual Winner: Player {actual_player}")
+                
+        correct_count_ratio = correct / count
+        print(f"Correct: {correct}/{count}, Percentage: {correct_count_ratio*100}%")
 
-            # Add the nodes for the current game state
-            for q in range(self.board_size):
-                for r in range(self.board_size):
-                    node_id = f"cell{q}_{r}"
-                    neighbors = self._get_neighbors(q, r)
-                    graphs_test.add_graph_node(0, node_id, len(neighbors))
-
-            # Add the edges between nodes for the current game state
-            graphs_test.prepare_edge_configuration()
-            for q in range(self.board_size):
-                for r in range(self.board_size):
-                    node_id = f"cell{q}_{r}"
-                    neighbors = self._get_neighbors(q, r)
-                    for nq, nr in neighbors:
-                        neighbor_id = f"cell{nq}_{nr}"
-                        edge_type = self._get_edge_type(q, r, nq, nr)
-                        graphs_test.add_graph_node_edge(0, node_id, neighbor_id, edge_type)
-
-            # Add the features for the current game state
-            for q in range(self.board_size):
-                for r in range(self.board_size):
-                    node_id = f"cell{q}_{r}"
-                    cell_value = game_state[q][r]
-                    graphs_test.add_graph_node_property(0, node_id, node_id)
-                    graphs_test.add_graph_node_property(0, node_id, str(cell_value))
-
-            graphs_test.encode()
-
-            # Predict the outcome of the current game state
-            predicted_winner = self.tm.predict(graphs_test)[0]  # Get the prediction for this single graph
-
-            # Print the predicted winner
-            if predicted_winner == 1:
-                print(f"Game {idx + 1}: Predicted Winner: Player 1, Actual winner: Player {2 if y[idx] == -1 else 1}")
-            else:
-                print(f"Game {idx + 1}: Predicted Winner: Player 2, Actual winner: Player {2 if y[idx] == -1 else 1}")
 
 if __name__ == "__main__":
     """
     Main execution block to instantiate the HexTsetlinMachine, prepare graphs, train the model,
     and evaluate its performance.
     """
-    # Instantiate the HexTsetlinMachine with specified parameters
-    hexTsetlinMachine = HexTsetlinMachine(
-        board_size=7,  # Size of the Hex board (7x7)
-        dataset_path="datasets/hex_games_1_000_000_size_7.csv",  # Path to the dataset CSV file
-        nrows=50000  # Number of rows to load from the dataset
-    )
-
+    # 5X5 100% Accuracy
     """hexTsetlinMachine = HexTsetlinMachine(
-        board_size=3,
-        dataset_path="datasets/hex_winning_positions.csv",
-        nrows=1000
+        board_size=7,  # Size of the Hex board (7x7)
+        dataset_path="hex_games_1_000_000_size_7.csv",  # Path to the dataset CSV file
+        nrows=100000,  # Number of rows to load from the dataset,
+        epochs=30,
+        num_clauses=600,
+        T=300,
+        s=1.0,
+        depth=1
+    )"""
+
+    # 7X7 100% Accuracy
+    """hexTsetlinMachine = HexTsetlinMachine(
+        board_size=5,  # Size of the Hex board (7x7)
+        dataset_path="hex_winning_positions.csv",  # Path to the dataset CSV file
+        nrows=80000,  # Number of rows to load from the dataset,
+        epochs=10,
+        num_clauses=1400,
+        T=700,
+        s=1.0,
+        depth=1
+    )"""
+
+    #9X9 100% accuracy
+    hexTsetlinMachine = HexTsetlinMachine(
+        board_size=9,  # Size of the Hex board (7x7)
+        dataset_path="hex_games_9.csv",  # Path to the dataset CSV file
+        nrows=400000,  # Number of rows to load from the dataset,
+        epochs=30,
+        num_clauses=20000,
+        T=5000,
+        s=1.0,
+        depth=1
+    )
+    
+    #11X11
+    """hexTsetlinMachine = HexTsetlinMachine(
+        board_size=11,  # Size of the Hex board (7x7)
+        dataset_path="hex_games_11.csv",  # Path to the dataset CSV file
+        nrows=100000,  # Number of rows to load from the dataset,
+        epochs=30,
+        num_clauses=2000,
+        T=500,
+        s=1.0,
+        depth=1
+    )"""
+
+    #13X13
+    """hexTsetlinMachine = HexTsetlinMachine(
+        board_size=13,  # Size of the Hex board (7x7)
+        dataset_path="hex_games_13.csv",  # Path to the dataset CSV file
+        nrows=100000,  # Number of rows to load from the dataset,
+        epochs=30,
+        num_clauses=2500,
+        T=1250,
+        s=1.0,
+        depth=1
     )"""
 
     # Prepare the graph structures for training and testing data
