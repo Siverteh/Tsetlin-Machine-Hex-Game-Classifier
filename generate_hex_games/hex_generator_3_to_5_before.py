@@ -1,7 +1,8 @@
 import random
 import csv
+import os
 import multiprocessing
-from multiprocessing import Pool
+from multiprocessing import Pool, Manager, Lock
 
 BOARD_DIM = 5  # Board dimension (5x5)
 
@@ -92,14 +93,12 @@ class HexGame:
         new_game.moves = self.moves[:]
         return new_game
 
-# We use a memo to avoid re-checking states multiple times.
 memo = {}
 
 def can_force_win_in_n_moves(game, current_player, target_winner, moves_left):
     """
     Returns True if 'target_winner' can force a win in exactly 'moves_left' moves 
     under perfect play from both sides.
-    We do a full enumeration of all moves by both players at each step.
     """
     state_key = (tuple(game.get_board_state()), current_player, target_winner, moves_left)
     if state_key in memo:
@@ -115,10 +114,11 @@ def can_force_win_in_n_moves(game, current_player, target_winner, moves_left):
         any_forced = False
         for pos in game.open_positions:
             game.place_piece(current_player, pos)
-            # Explore all permutations forward
             if can_force_win_in_n_moves(game, -current_player, target_winner, moves_left - 1):
                 any_forced = True
             game.remove_piece(pos)
+            if any_forced:
+                break
         memo[state_key] = any_forced
         return any_forced
     else:
@@ -172,10 +172,12 @@ def generate_game_state_with_forced_win(seed):
         move_count += 1
         current_player = -current_player
 
-    winning_player = -current_player
+    # Set winning_player to the next to move, ensuring they start the 5-move sequence
+    winning_player = current_player
+
+    # Turn parity check to avoid invalid states
     player1_moves = sum(1 for _, p in game.moves if p == 1)
     player_neg1_moves = sum(1 for _, p in game.moves if p == -1)
-    # Turn parity check
     if player1_moves < player_neg1_moves or player1_moves > player_neg1_moves + 1:
         return None
 
@@ -185,13 +187,6 @@ def generate_game_state_with_forced_win(seed):
         return board_state, winning_player
     return None
 
-def save_games_to_csv(games, filename):
-    with open(filename, mode='w', newline='') as file:
-        csv_writer = csv.writer(file)
-        write_csv_headers(csv_writer)
-        for board_state, winner in games:
-            csv_writer.writerow(list(board_state) + [winner])
-
 def write_csv_headers(csv_writer):
     headers = []
     for row in range(BOARD_DIM):
@@ -200,45 +195,63 @@ def write_csv_headers(csv_writer):
     headers.append("winner")
     csv_writer.writerow(headers)
 
-def worker_generate_games(num_games_per_worker, worker_id):
-    unique_games = set()
-    games = []
+def append_game_to_csv(lock, filename, board_state, winner, shared_states, shared_count):
+    with lock:
+        # Ensure global uniqueness
+        if board_state in shared_states:
+            return
+        shared_states[board_state] = True
+
+        file_exists = os.path.exists(filename) and os.path.getsize(filename) > 0
+        with open(filename, mode='a', newline='') as file:
+            csv_writer = csv.writer(file)
+            # Write headers only if file is empty
+            if not file_exists:
+                write_csv_headers(csv_writer)
+            csv_writer.writerow(list(board_state) + [winner])
+
+        # Increment the global counter
+        shared_count.value += 1
+        if shared_count.value % 1000 == 0:
+            print(f"{shared_count.value} board states have been saved to the CSV.")
+
+def worker_generate_games(num_games_per_worker, worker_id, filename, lock, shared_states, shared_count):
     seed = random.randint(0, 1_000_000_000) + worker_id
     attempts = 0
-    # Increase attempts drastically due to complexity
-    while len(unique_games) < num_games_per_worker and attempts < num_games_per_worker * 1000:
+    found = 0
+    while found < num_games_per_worker and attempts < num_games_per_worker * 1000:
         result = generate_game_state_with_forced_win(seed)
         seed += 1
         attempts += 1
         if result:
             board_state, winner = result
-            if board_state not in unique_games:
-                unique_games.add(board_state)
-                games.append((board_state, winner))
-    return games
+            # Append game to CSV if not a duplicate
+            if board_state not in shared_states:
+                append_game_to_csv(lock, filename, board_state, winner, shared_states, shared_count)
+                found += 1
+    return found
 
 if __name__ == "__main__":
     import time
 
-    total_unique_games = 100  # Try to find 10 games exactly 5 moves away.
+    total_unique_games = 100  # Number of total games to generate
     num_workers = multiprocessing.cpu_count()
     num_games_per_worker = total_unique_games // num_workers + 1
+
+    filename = 'hex_games_exactly_five_moves_ahead.csv'
+
+    manager = Manager()
+    lock = manager.Lock()
+    shared_states = manager.dict()
+    shared_count = manager.Value('i', 0)
 
     print(f"Using {num_workers} worker processes.")
     start_time = time.time()
 
     with Pool(processes=num_workers) as pool:
-        worker_args = [(num_games_per_worker, i) for i in range(num_workers)]
+        worker_args = [(num_games_per_worker, i, filename, lock, shared_states, shared_count) for i in range(num_workers)]
         results = pool.starmap(worker_generate_games, worker_args)
 
-    combined_games = []
-    unique_game_states = set()
-    for gms in results:
-        for board_state, winner in gms:
-            if board_state not in unique_game_states:
-                unique_game_states.add(board_state)
-                combined_games.append((board_state, winner))
-
-    save_games_to_csv(combined_games[:total_unique_games], 'hex_games_exactly_five_moves_ahead.csv')
+    total_found = sum(results)
     end_time = time.time()
-    print(f"Generated {len(combined_games)} unique games in {end_time - start_time:.2f} seconds.")
+    print(f"Generated {total_found} unique games in {end_time - start_time:.2f} seconds.")

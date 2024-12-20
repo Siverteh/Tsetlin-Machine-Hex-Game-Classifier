@@ -4,7 +4,7 @@ from tsetlin_machine.visualize_hex_board import visualize_hex_board
 # Example usage
 if __name__ == '__main__':
     # Initialize the data loader with your dataset path and board size
-    data_loader = HexDataLoader('C:/Users/siver/Master_School_Work/Autumn2024/Learning_Systems/Learning_Systems_Project/datasets/hex_games_two_moves_before_win.csv', board_size=5)
+    data_loader = HexDataLoader('C:/Users/Eier/Tsetlin-Machine-Hex-Game-Classifier/datasets/hex_games_five_moves_ahead.csv', board_size=7)
 
     # Load the data
     data_loader.load_data(desired_samples_per_class=10)
